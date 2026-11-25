@@ -27,7 +27,13 @@ function inRange(version: string, range: string): boolean {
 
 test('parses full versions with prerelease and build', () => {
   assert.deepEqual(v('1.2.3'), { major: 1, minor: 2, patch: 3, prerelease: [], build: [] });
-  assert.deepEqual(v(' v2.0.0-rc.1+build.5 '), { major: 2, minor: 0, patch: 0, prerelease: ['rc', 1], build: ['build', '5'] });
+  assert.deepEqual(v(' v2.0.0-rc.1+build.5 '), {
+    major: 2,
+    minor: 0,
+    patch: 0,
+    prerelease: ['rc', 1],
+    build: ['build', '5'],
+  });
   assert.deepEqual(v('1.0.0-alpha-1.0a.01b').prerelease, ['alpha-1', '0a', '01b']);
   assert.deepEqual(v('0.0.0+001').build, ['001']);
 });
@@ -46,6 +52,7 @@ const invalidVersions = [
   '^1.2.3',
   'latest',
   '99999999999999999.0.0',
+  '1.2.3-99999999999999999999',
   `1.0.0-${'a'.repeat(MAX_INPUT_LENGTH)}`,
 ];
 
@@ -199,6 +206,7 @@ const badRanges = [
   '>=a.b.c',
   '^^1.2.3',
   '1.2.3 || foo',
+  '>=1.0.0-99999999999999999999',
   'x'.repeat(MAX_INPUT_LENGTH + 1),
 ];
 
@@ -221,4 +229,28 @@ test('parseRange returns comparators npm would use', () => {
       ],
     },
   });
+});
+
+test('the largest safe prerelease number is accepted', () => {
+  assert.deepEqual(v(`1.0.0-${Number.MAX_SAFE_INTEGER}`).prerelease, [Number.MAX_SAFE_INTEGER]);
+  assert.equal(parseRange(`>=1.0.0-${Number.MAX_SAFE_INTEGER}`).ok, true);
+});
+
+test('error messages name the problem', () => {
+  const big = parseVersion('1.2.3-99999999999999999999');
+  assert.deepEqual(big, { ok: false, error: 'prerelease number too large in "1.2.3-99999999999999999999"' });
+  const part = parseRange('^1.0.0 || foo');
+  assert.deepEqual(part, { ok: false, error: 'invalid range part "foo"' });
+});
+
+test('error messages escape control characters from untrusted input', () => {
+  const version = parseVersion('1.2.\n\u001b[31mx');
+  assert.equal(version.ok, false);
+  if (!version.ok) {
+    assert.equal(version.error, 'invalid version "1.2.\\n\\u001b[31mx"');
+    assert.doesNotMatch(version.error, /[\u0000-\u001f]/);
+  }
+  const range = parseRange('^1.0.0 \u0007bell');
+  assert.equal(range.ok, false);
+  if (!range.ok) assert.doesNotMatch(range.error, /[\u0000-\u001f]/);
 });

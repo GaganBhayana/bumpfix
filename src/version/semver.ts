@@ -30,14 +30,27 @@ const PARTIAL_RE = new RegExp(
 
 const fail = (error: string): ParseResult<never> => ({ ok: false, error });
 
+/** Quotes untrusted input for an error message, escaping newlines and control characters. */
+const quote = (text: string): string => JSON.stringify(text);
+
 function toInt(text: string): number | undefined {
   const n = Number(text);
   return Number.isSafeInteger(n) ? n : undefined;
 }
 
-function parsePrerelease(text: string | undefined): (string | number)[] {
+/** Splits prerelease identifiers; undefined if a numeric one is above `Number.MAX_SAFE_INTEGER`. */
+function parsePrerelease(text: string | undefined): (string | number)[] | undefined {
   if (text === undefined) return [];
-  return text.split('.').map((id) => (/^\d+$/.test(id) ? Number(id) : id));
+  const ids: (string | number)[] = [];
+  for (const id of text.split('.')) {
+    if (!/^\d+$/.test(id)) ids.push(id);
+    else {
+      const n = toInt(id);
+      if (n === undefined) return undefined;
+      ids.push(n);
+    }
+  }
+  return ids;
 }
 
 /**
@@ -48,13 +61,13 @@ export function parseVersion(text: string): ParseResult<SemVer> {
   const trimmed = text.trim();
   if (trimmed.length > MAX_INPUT_LENGTH) return fail(`version longer than ${MAX_INPUT_LENGTH} characters`);
   const m = VERSION_RE.exec(trimmed);
-  if (!m) return fail(`invalid version "${trimmed}"`);
+  if (!m) return fail(`invalid version ${quote(trimmed)}`);
   const [major, minor, patch] = [m[1], m[2], m[3]].map((p) => toInt(p ?? ''));
-  if (major === undefined || minor === undefined || patch === undefined) return fail(`version number too large in "${trimmed}"`);
-  const prerelease = parsePrerelease(m[4]);
-  if (prerelease.some((id) => typeof id === 'number' && !Number.isSafeInteger(id))) {
-    return fail(`prerelease number too large in "${trimmed}"`);
+  if (major === undefined || minor === undefined || patch === undefined) {
+    return fail(`version number too large in ${quote(trimmed)}`);
   }
+  const prerelease = parsePrerelease(m[4]);
+  if (prerelease === undefined) return fail(`prerelease number too large in ${quote(trimmed)}`);
   return { ok: true, value: { major, minor, patch, prerelease, build: m[5] ? m[5].split('.') : [] } };
 }
 
@@ -86,7 +99,10 @@ function comparePrerelease(a: SemVer['prerelease'], b: SemVer['prerelease']): -1
 /** Semver precedence: -1 if `a < b`, 0 if equal, 1 if `a > b`. Build metadata is ignored. */
 export function compareVersions(a: SemVer, b: SemVer): -1 | 0 | 1 {
   return (
-    sign(a.major - b.major) || sign(a.minor - b.minor) || sign(a.patch - b.patch) || comparePrerelease(a.prerelease, b.prerelease)
+    sign(a.major - b.major) ||
+    sign(a.minor - b.minor) ||
+    sign(a.patch - b.patch) ||
+    comparePrerelease(a.prerelease, b.prerelease)
   );
 }
 
@@ -141,7 +157,8 @@ function caretUpper(major: number, minor: number, patch: number): SemVer {
   return ver(0, 0, patch + 1, [0]);
 }
 
-interface Partial {
+/** A range operand such as `1`, `1.2`, `1.x` or `1.2.3-beta`; missing parts are wildcards. */
+interface PartialVersion {
   readonly major?: number;
   readonly minor?: number;
   readonly patch?: number;
@@ -150,7 +167,7 @@ interface Partial {
 
 const isX = (part: string | undefined): boolean => part === undefined || part === 'x' || part === 'X' || part === '*';
 
-function parsePartial(text: string): Partial | undefined {
+function parsePartial(text: string): PartialVersion | undefined {
   const m = PARTIAL_RE.exec(text);
   if (!m) return undefined;
   const nums: (number | undefined)[] = [];
@@ -165,7 +182,7 @@ function parsePartial(text: string): Partial | undefined {
   }
   const [major, minor, patch] = nums;
   const prerelease = parsePrerelease(m[4]);
-  if (prerelease.length > 0 && patch === undefined) return undefined;
+  if (prerelease === undefined || (prerelease.length > 0 && patch === undefined)) return undefined;
   return {
     prerelease,
     ...(major !== undefined && { major }),
@@ -175,7 +192,7 @@ function parsePartial(text: string): Partial | undefined {
 }
 
 /** Turns one range token (operator plus partial version) into plain comparators. */
-function desugar(operator: string, p: Partial): readonly Comparator[] {
+function desugar(operator: string, p: PartialVersion): readonly Comparator[] {
   const { major: M, minor: m, patch: pa, prerelease } = p;
   if (M === undefined) return operator === '<' || operator === '>' ? NONE : ANY;
   if (operator === '^') {
@@ -216,7 +233,7 @@ function parseSet(text: string): ParseResult<readonly Comparator[]> {
   for (const token of tokens) {
     const [, operator = '', rest = ''] = TOKEN_RE.exec(token) ?? [];
     const partial = parsePartial(rest);
-    if (!partial) return fail(`invalid range part "${token}"`);
+    if (!partial) return fail(`invalid range part ${quote(token)}`);
     out.push(...desugar(operator, partial));
   }
   return { ok: true, value: out };
@@ -231,8 +248,8 @@ function parseSet(text: string): ParseResult<readonly Comparator[]> {
 export function parseRange(text: string): ParseResult<Range> {
   const trimmed = text.trim();
   if (trimmed.length > MAX_INPUT_LENGTH) return fail(`range longer than ${MAX_INPUT_LENGTH} characters`);
-  if (/\s-\s/.test(trimmed)) return fail(`hyphen ranges are not supported: "${trimmed}"`);
-  if (/[:/]/.test(trimmed)) return fail(`not a version range: "${trimmed}"`);
+  if (/\s-\s/.test(trimmed)) return fail(`hyphen ranges are not supported: ${quote(trimmed)}`);
+  if (/[:/]/.test(trimmed)) return fail(`not a version range: ${quote(trimmed)}`);
   const sets: (readonly Comparator[])[] = [];
   for (const part of trimmed.split('||')) {
     const set = parseSet(part.trim());
