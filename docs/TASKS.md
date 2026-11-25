@@ -5,7 +5,7 @@ Status values: `todo`, `review (PR #n)`, `done (PR #n)`, `blocked: <reason>`. Si
 ## M0 Foundation
 
 ### BF-001 Semver parsing and range checks
-- Status: todo
+- Status: review
 - Size: M
 - Depends on: none
 - Goal: `src/version/semver.ts`: parse versions (incl. prerelease and build), compare, classify a bump as `major|minor|patch|prerelease`, and test simple npm ranges (`^`, `~`, `>=`, `<`, `||`, `x`).
